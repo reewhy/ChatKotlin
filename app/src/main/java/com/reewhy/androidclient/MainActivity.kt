@@ -7,12 +7,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.*
@@ -29,7 +39,9 @@ import kotlinx.coroutines.launch
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.NetworkInterface
 
+// Porta e chiave
 const val SERVER_PORT = 8080
 const val SHIFT = 3
 
@@ -39,6 +51,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Rimuovere la status bar
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
         actionBar?.hide()
 
@@ -48,11 +61,15 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Caesar cipher for encoding/decoding
+// Funzione per cifrare e decifrare
 fun caesarCipher(input: String, shift: Int): String {
+    // Ciclare per i caratteri di una stringa
     return input.map { char ->
+        // Controllare che la stringa sia un lettere
+        // (I caratteri speciali non verranno criptati e rimarranno tali)
         if (char.isLetter()) {
             val base = if (char.isUpperCase()) 'A' else 'a'
+            // Cambiamo di posizione
             ((char - base + shift + 26) % 26 + base.code).toChar()
         } else {
             char
@@ -60,18 +77,43 @@ fun caesarCipher(input: String, shift: Int): String {
     }.joinToString("")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UDPClientApp() {
+    // IP destinatario
     var serverIp by remember { mutableStateOf("192.168.1.45") }
+    // Messaggio della TextField
     var message by remember { mutableStateOf("") }
+    // Lista di messaggi ricevuti e inviati
     val receivedMessages = remember { mutableStateListOf<Message>() }
+    // Lista dei peers nella rete
+    val peers = remember { mutableStateListOf<String>() }
+    // Stato della select box
+    var expanded by remember { mutableStateOf<Boolean>(false) }
 
-    // Launch the receiving coroutine
+    // Mandiamo un messaggio per avvissare che ci siamo uniti alla rete
+    newPeer()
+
+    // startiamo la coroutine
     LaunchedEffect(Unit) {
         CoroutineScope(Dispatchers.IO).launch {
-            receiveMessages { decryptedMsg ->
-                receivedMessages.add(Message(decryptedMsg, false)) // Add new message to the list
-            }
+
+            receiveMessages (
+                // Quando si riceve dei messaggi li salviamo nella lista dei messaggi ricevuti
+                onMessageReceived = { decryptedMsg ->
+                    receivedMessages.add(Message(decryptedMsg, false))
+                },
+                // Quando si riceve il messaggio di un nuovo peer, si aggiunge alla lista dei peerss
+                onPeerReceived = { peer ->
+                    val peerStr = peer.toString().replace("/","")
+
+                    // Aggiungiamo solo se il peer è nuovo
+                    if(!(peerStr in peers)) {
+                        peers.add(peerStr)
+                    }
+                    Log.d("UDPClient", peer)
+                }
+            )
         }
     }
 
@@ -80,41 +122,94 @@ fun UDPClientApp() {
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Header
         Text(
             "UDP Chat",
             fontSize = 28.sp,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Server IP Input
-        TextField(
-            value = serverIp,
-            onValueChange = { serverIp = it },
-            label = { Text("Server IP") },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp)
-        )
+        // Select box dei peers
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                readOnly = true,
+                value = serverIp,
+                onValueChange = {},
+                label = { Text(text = "Server IP")},
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                },
+                colors = OutlinedTextFieldDefaults.colors(),
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
 
-        // Chat History
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false}
+            ) {
+                peers.forEach { peer: String ->
+                    DropdownMenuItem(
+                        text = { Text(text = peer)},
+                        onClick = {
+                            expanded = false
+                            serverIp = peer
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround
+        ){
+            Button(
+                onClick = {
+                    newPeer()
+                }
+            ) {
+                Text("Aggiorna")
+            }
+
+            Button(
+                onClick = {
+                    // Resettiamo la lista dei messaggi
+                    receivedMessages.clear()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                )
+
+            ) {
+                Text("Reset")
+            }
+        }
+
+
+        // Chat
         Box(
             modifier = Modifier
-                .weight(1f) // Takes up available space
+                .weight(1f)
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
         ) {
             LazyColumn(
-                reverseLayout = true, // Scrolls from bottom to top
+                reverseLayout = true, // Ci permette di scrollare la lista da sotto a sopra (normalmente è il contrario, quindi gli oggetti iniziano ad essere inseriti sopra)
                 modifier = Modifier.fillMaxSize()
             ) {
+                // Aggiungiamo alla colonna tutti i messaggi nella lista
                 items(receivedMessages.asReversed()) { msg ->
                     MessageView(msg)
                 }
             }
         }
 
-        // Message Input and Send Button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -130,6 +225,11 @@ fun UDPClientApp() {
                     .padding(end = 8.dp)
             )
 
+            // Quando viene mandato un messaggio si controlla per prima cosa che la TextField non sia vuota
+            // Successivamente salviamo in una variabile temporanea il messaggio
+            // Aggiungiamo il messaggio nella nostra lista di messaggi
+            // Mandiamo il messaggio
+            // Resettiamo la variabile del messaggio
             Button(onClick = {
                 if (message.isNotBlank()) {
                     val toSend: String = message
@@ -146,6 +246,34 @@ fun UDPClientApp() {
     }
 }
 
+
+fun newPeer(){
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val socket = DatagramSocket()
+
+            // Opzioni per mandare un messaggio in broadcast
+            socket.broadcast = true
+            val address = InetAddress.getByName("255.255.255.255")
+
+            // Messaggio standard da inviare per avvisare che c'è un nuovo
+            // TO-DO: Cambiarlo in caratteri
+            val message = "con"
+
+            val buffer = message.toByteArray()
+
+            val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
+            socket.send(packet)
+
+            Log.d("UDPClient", "New peer sent")
+
+            socket.close()
+        } catch (e: Exception) {
+            Log.e("UDPClient", "Error sending message new peer: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+}
 
 @Composable
 fun MessageView(msg: Message) {
@@ -206,22 +334,48 @@ fun sendMessage(message: String, SERVER_IP: String) {
     }
 }
 
-// Function to receive and decrypt messages
-fun receiveMessages(onMessageReceived: (String) -> Unit) {
+// Funzione per ottenere la lista degli IP del dispositivo
+// (La funzione si trova su Internet, non è stata programmata da me)
+fun getLocalIPAddresses(): List<String> {
+    return try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .flatMap { it.inetAddresses.toList() }
+            .filter { !it.isLoopbackAddress && it is InetAddress }
+            .map { it.hostAddress }
+    } catch (e: Exception) {
+        Log.e("UDPClient", "Error getting local IPs: ${e.message}")
+        emptyList()
+    }
+}
+
+fun receiveMessages(onMessageReceived: (String) -> Unit, onPeerReceived: (String) -> Unit) {
     try {
         val socket = DatagramSocket(SERVER_PORT)
         val buffer = ByteArray(1024)
+        // Prendiamo la lista degli indirizzi
+        val localAddress = getLocalIPAddresses()
 
         while (true) {
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
 
+            // Prendiamo un messaggio e lo decriptiamo
             val encryptedMessage = String(packet.data, 0, packet.length)
             val decryptedMessage = caesarCipher(encryptedMessage, -SHIFT)
 
-            Log.d("UDPClient", "Received: $decryptedMessage")
+            // Se il messaggio non è arrivato da me stesso ed è una messaggio di nuova connessione
+            if(decryptedMessage.startsWith("zlk") && packet.address.hostAddress !in localAddress){
+                val s = packet.address.toString()
+                // Si chiama la funzione di callback "onPeerReceived"
+                onPeerReceived(s)
+            // Se invece il messaggio non è un messaggio di nuova connessione
+            } else if(!decryptedMessage.startsWith("zlk")){
+                Log.d("UDPClient", "Received: $decryptedMessage")
+                // Si chiama la funzinoe di callback "onMessageReceived"
+                onMessageReceived(decryptedMessage)
+            }
 
-            onMessageReceived(decryptedMessage)
+
         }
     } catch (e: Exception) {
         Log.e("UDPClient", "Error receiving message: ${e.message}")
