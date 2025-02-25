@@ -81,7 +81,7 @@ fun caesarCipher(input: String, shift: Int): String {
 @Composable
 fun UDPClientApp() {
     // IP destinatario
-    var serverIp by remember { mutableStateOf("192.168.1.45") }
+    var serverIp by remember { mutableStateOf("192.168.1.1") }
     // Messaggio della TextField
     var message by remember { mutableStateOf("") }
     // Lista di messaggi ricevuti e inviati
@@ -341,7 +341,7 @@ fun getLocalIPAddresses(): List<String> {
         NetworkInterface.getNetworkInterfaces().toList()
             .flatMap { it.inetAddresses.toList() }
             .filter { !it.isLoopbackAddress && it is InetAddress }
-            .map { it.hostAddress }
+            .map { it.hostAddress } as List<String>
     } catch (e: Exception) {
         Log.e("UDPClient", "Error getting local IPs: ${e.message}")
         emptyList()
@@ -360,11 +360,12 @@ fun receiveMessages(onMessageReceived: (String) -> Unit, onPeerReceived: (String
             socket.receive(packet)
 
             // Prendiamo un messaggio e lo decriptiamo
-            val encryptedMessage = String(packet.data, 0, packet.length)
+            val encryptedMessage = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
             val decryptedMessage = caesarCipher(encryptedMessage, -SHIFT)
 
+            Log.d("UDPClient", "Test: ${encryptedMessage}" )
             // Se il messaggio non è arrivato da me stesso ed è una messaggio di nuova connessione
-            if(decryptedMessage.startsWith("zlk") && packet.address.hostAddress !in localAddress){
+            if(decryptedMessage.startsWith("zlk", ignoreCase = false)){
                 val s = packet.address.toString()
                 // Si chiama la funzione di callback "onPeerReceived"
                 onPeerReceived(s)
