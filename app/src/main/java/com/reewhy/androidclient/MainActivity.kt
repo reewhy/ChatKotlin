@@ -1,8 +1,11 @@
 package com.reewhy.androidclient
 
+// Imports
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -11,16 +14,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -28,29 +28,36 @@ import androidx.compose.material3.TextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.security.MessageDigest.*
+import kotlin.coroutines.CoroutineContext
+
+// Classe dei messaggi
+data class Message(val msg: String, val me: Boolean)
 
 // Porta e chiave
 const val SERVER_PORT = 8080
 const val SHIFT = 3
 
-data class Message(val msg: String, val me: Boolean)
+// Contest globale
+lateinit var con: Context
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        con = this // Inizializzazione del contesto globale
 
         // Rimuovere la status bar
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -61,6 +68,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+// Fuzniona per calcolare l'hash
+fun sha256(input: String): String {
+    val bytes = getInstance("SHA-256").digest(input.toByteArray())
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
 
 // Funzione per cifrare e decifrare
 fun caesarCipher(input: String, shift: Int): String {
@@ -95,6 +109,7 @@ fun UDPClientApp() {
     // Mandiamo un messaggio per avvissare che ci siamo uniti alla rete
     newPeer("con0")
 
+
     // startiamo la coroutine
     LaunchedEffect(Unit) {
         CoroutineScope(Dispatchers.IO).launch {
@@ -113,7 +128,8 @@ fun UDPClientApp() {
                         peers.add(peerStr)
                     }
                     Log.d("UDPClient", peer)
-                }
+                },
+
             )
         }
     }
@@ -190,6 +206,18 @@ fun UDPClientApp() {
             ) {
                 Text("Reset")
             }
+
+            // Forziamo l'errore quando cliccato
+            Button(
+                onClick = {
+                    forzaErrore(serverIp)
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                )
+            ) {
+                Text("Forza")
+            }
         }
 
 
@@ -247,32 +275,7 @@ fun UDPClientApp() {
     }
 }
 
-
-fun newPeer(message: String){
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val socket = DatagramSocket()
-
-            // Opzioni per mandare un messaggio in broadcast
-            socket.broadcast = true
-            val address = InetAddress.getByName("255.255.255.255")
-
-            // Messaggio standard da inviare per avvisare che c'è un nuovo
-            // TO-DO: Cambiarlo in caratteri
-
-            val buffer = message.toByteArray()
-
-            val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
-            socket.send(packet)
-
-            socket.close()
-        } catch (e: Exception) {
-            Log.e("UDPClient", "Error sending message new peer: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-}
-
+// UI di un messaggio
 @Composable
 fun MessageView(msg: Message) {
     val bubbleColor = if (msg.me) MaterialTheme.colorScheme.tertiaryContainer
@@ -282,6 +285,7 @@ fun MessageView(msg: Message) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp, horizontal = 8.dp),
+        // Il messaggio viene messo sulla destra se fatto da me e sulla sinistra se fatto da altri
         horizontalArrangement = if (msg.me) Arrangement.End else Arrangement.Start
     ) {
         Box(
@@ -295,11 +299,12 @@ fun MessageView(msg: Message) {
                         bottomEnd = if (msg.me) 0.dp else 20.dp
                     )
                 )
-                .padding(12.dp) // Padding inside the bubble
+                .padding(12.dp) // Padding all'interno del messaggio
         ) {
             Text(
                 text = msg.msg,
                 fontSize = 18.sp,
+                // Il colore cambia in base all'autore del messaggio come la posizione
                 color = if (msg.me) MaterialTheme.colorScheme.onTertiaryContainer
                 else MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -307,25 +312,88 @@ fun MessageView(msg: Message) {
     }
 }
 
+// Funziona per avvisare in broadcast che c'è un nuovo peer nella LAN
+fun newPeer(message: String){
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val socket = DatagramSocket()
 
+            // Opzioni per mandare un messaggio in broadcast
+            socket.broadcast = true
+            val address = InetAddress.getByName("255.255.255.255")
 
+            // Generariamo l'hash del messaggio
+            val hash = sha256(message)
 
+            // Creiamo il messaggio da inviare
+            val messageWithHash = "$message::$hash"
+
+            Log.d("UDPClient", hash)
+
+            // Invio del messaggio
+            val buffer = messageWithHash.toByteArray()
+            val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
+            socket.send(packet)
+
+            socket.close() // Chiusura del socket
+        } catch (e: Exception) {
+            Log.e("UDPClient", "Error sending message new peer: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+}
+
+// Funzione per forzare un errore con gli hash
+fun forzaErrore(SERVER_IP: String) {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            Log.d("UDPClient", "Forcing error to $SERVER_IP:$SERVER_PORT")
+
+            val socket = DatagramSocket(null).apply {
+                reuseAddress = true
+                bind(InetSocketAddress("0.0.0.0", 0)) // Binds to an available port
+            }
+
+            val address = InetAddress.getByName(SERVER_IP)
+
+            // Creiamo un messaggio con un errore con l'hash appositamente
+            val messageWithHash = "ciao::err"
+            val buffer = messageWithHash.toByteArray()
+
+            val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
+            socket.send(packet)
+
+            Log.d("UDPClient", "Sent: $messageWithHash")
+            socket.close()
+
+        } catch (e: Exception) {
+            Log.e("UDPClient", "Error sending message: ${e.message}", e) // Logs full stack trace
+        }
+    }
+}
 
 // Function to send an encrypted message
 fun sendMessage(message: String, SERVER_IP: String) {
     Log.d("UDPClient", "Sending: $message")
     try {
+        // Creiamo il socket
         val socket = DatagramSocket()
+        // Prendiamo l'indirizzo del destinatario
         val address = InetAddress.getByName(SERVER_IP)
 
+        // Generiamo il messaggio da inviare
         val encryptedMessage = caesarCipher(message, SHIFT)
-        val buffer = encryptedMessage.toByteArray()
+        val messageHash = sha256(encryptedMessage)
+        val messageWithHash = "$encryptedMessage::$messageHash"
 
+        // Invio del messaggio
+        val buffer = messageWithHash.toByteArray()
         val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
         socket.send(packet)
 
         Log.d("UDPClient", "Sent: $encryptedMessage")
 
+        // Chiusura del socket
         socket.close()
     } catch (e: Exception) {
         Log.e("UDPClient", "Error sending message: ${e.message}")
@@ -346,47 +414,81 @@ fun getLocalIPAddresses(): List<String> {
     }
 }
 
+// Funzione per mostrare i Toast all'interno di una Coroutine
+fun showToast(){
+    CoroutineScope(Dispatchers.IO).launch {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(con, "Malformed message received", Toast.LENGTH_LONG).show()
+        }
+    }
+}
+
+// Funzione per ricevere i messaggi
 fun receiveMessages(
-    onMessageReceived: (String) -> Unit,
-    onPeerReceived: (String) -> Unit
+    // Funzioni di callback
+    onMessageReceived: (String) -> Unit,    // Callback quando si riceve un messaggio normale
+    onPeerReceived: (String) -> Unit,       // Callback quando si riceve un nuovo peer
 ) {
     try {
-        val socket = DatagramSocket(null).apply{
-            reuseAddress = true
-            bind(InetSocketAddress("0.0.0.0", SERVER_PORT))
-        }
+        // Creazione di un socket
+        val socket = DatagramSocket(SERVER_PORT)
         val buffer = ByteArray(1024)
         val localAddress = getLocalIPAddresses()
 
         while (true) {
+            // Prendiamo il pacchetto ricevuto
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
 
-            val encryptedMessage = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
-            val decryptedMessage = caesarCipher(encryptedMessage, -SHIFT)
+            // Trasformiamo i dati in una stringa
+            val receivedData = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
 
-            Log.d("UDPClient", "Test: $encryptedMessage")
-
-            // Skip if the message is from the local device
+            // Saltiamo il passo del ciclo se il mittente è il localhost
             if (localAddress.contains(packet.address.hostAddress)) {
                 continue
             }
 
+            // Saltiamo il passo del ciclo se il messaggio non ha il separatore dell'hash
+            // (Si prende per scontato che se il messaggio non ha il separatore, la stringa è deformata)
+            if(!receivedData.contains("::")){
+                showToast()
+                Log.e("UDPClient", "Hash error")
+                continue
+            }
+
+            // Dividiamo il messaggio e l'hash ricevuti
+            val (encryptedMessage, receivedHash) = receivedData.split("::", limit = 2)
+
+            val computedHash = sha256(encryptedMessage) // Calcolo dell'hash
+            // Controlliamo che l'hash ricevuto e quello calcolato siano uguali
+            if(computedHash != receivedHash){
+                showToast()
+                Log.e("UDPClient", "Hash error")
+                continue
+            }
+            // Decriptiamo il messaggio
+            val decryptedMessage = caesarCipher(encryptedMessage, -SHIFT)
+
+            // Se il messaggio è "con0" ci troviamo nel caso in cui un nuovo host si è unito alla rete
+            // quindi salviamo il suo IP nella lista dei peers e inviamo indietro un messaggio "con0"
             if (encryptedMessage.startsWith("con0", ignoreCase = false)) {
                 Log.d("UDPClient", "New peer sent ${packet.address.hostAddress}")
                 val peerAddress = packet.address.hostAddress
                 onPeerReceived(peerAddress)
-
-                // Send "con1" back to the sender
                 newPeer("con1")
 
-            } else if (encryptedMessage.startsWith("con1")) {
+            }
+            // Se il messaggio è "con1" ci troviamo nel caso in cui un host ha risposto alla nostra notifica
+            // quindi salviamo l'IP nella nostra lista
+            else if (encryptedMessage.startsWith("con1")) {
                 Log.d("UDPClient", "New peer received ${packet.address.hostAddress}")
                 val peerAddress = packet.address.hostAddress
                 onPeerReceived(peerAddress)
 
+            // Nel caso non ci sia "con" nel messaggio ci troviamo nel caso base
+            // quindi mettiamo il messaggio nella lista dei messaggi ricevuti
             } else if (!decryptedMessage.startsWith("con")) {
-                Log.d("UDPClient", "Received: $decryptedMessage")
+                Log.d("UDPClient", "Received: $decryptedMessage::$receivedHash")
                 onMessageReceived(decryptedMessage)
             }
         }
