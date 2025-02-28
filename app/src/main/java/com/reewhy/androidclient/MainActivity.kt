@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 
 // Porta e chiave
@@ -92,7 +93,7 @@ fun UDPClientApp() {
     var expanded by remember { mutableStateOf<Boolean>(false) }
 
     // Mandiamo un messaggio per avvissare che ci siamo uniti alla rete
-    newPeer()
+    newPeer("con0")
 
     // startiamo la coroutine
     LaunchedEffect(Unit) {
@@ -171,7 +172,7 @@ fun UDPClientApp() {
         ){
             Button(
                 onClick = {
-                    newPeer()
+                    newPeer("con0")
                 }
             ) {
                 Text("Aggiorna")
@@ -247,7 +248,7 @@ fun UDPClientApp() {
 }
 
 
-fun newPeer(){
+fun newPeer(message: String){
     CoroutineScope(Dispatchers.IO).launch {
         try {
             val socket = DatagramSocket()
@@ -258,14 +259,11 @@ fun newPeer(){
 
             // Messaggio standard da inviare per avvisare che c'è un nuovo
             // TO-DO: Cambiarlo in caratteri
-            val message = "con"
 
             val buffer = message.toByteArray()
 
             val packet = DatagramPacket(buffer, buffer.size, address, SERVER_PORT)
             socket.send(packet)
-
-            Log.d("UDPClient", "New peer sent")
 
             socket.close()
         } catch (e: Exception) {
@@ -348,35 +346,49 @@ fun getLocalIPAddresses(): List<String> {
     }
 }
 
-fun receiveMessages(onMessageReceived: (String) -> Unit, onPeerReceived: (String) -> Unit) {
+fun receiveMessages(
+    onMessageReceived: (String) -> Unit,
+    onPeerReceived: (String) -> Unit
+) {
     try {
-        val socket = DatagramSocket(SERVER_PORT)
+        val socket = DatagramSocket(null).apply{
+            reuseAddress = true
+            bind(InetSocketAddress("0.0.0.0", SERVER_PORT))
+        }
         val buffer = ByteArray(1024)
-        // Prendiamo la lista degli indirizzi
         val localAddress = getLocalIPAddresses()
 
         while (true) {
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
 
-            // Prendiamo un messaggio e lo decriptiamo
             val encryptedMessage = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
             val decryptedMessage = caesarCipher(encryptedMessage, -SHIFT)
 
-            Log.d("UDPClient", "Test: ${encryptedMessage}" )
-            // Se il messaggio non è arrivato da me stesso ed è una messaggio di nuova connessione
-            if(decryptedMessage.startsWith("zlk", ignoreCase = false)){
-                val s = packet.address.toString()
-                // Si chiama la funzione di callback "onPeerReceived"
-                onPeerReceived(s)
-            // Se invece il messaggio non è un messaggio di nuova connessione
-            } else if(!decryptedMessage.startsWith("zlk")){
-                Log.d("UDPClient", "Received: $decryptedMessage")
-                // Si chiama la funzinoe di callback "onMessageReceived"
-                onMessageReceived(decryptedMessage)
+            Log.d("UDPClient", "Test: $encryptedMessage")
+
+            // Skip if the message is from the local device
+            if (localAddress.contains(packet.address.hostAddress)) {
+                continue
             }
 
+            if (encryptedMessage.startsWith("con0", ignoreCase = false)) {
+                Log.d("UDPClient", "New peer sent ${packet.address.hostAddress}")
+                val peerAddress = packet.address.hostAddress
+                onPeerReceived(peerAddress)
 
+                // Send "con1" back to the sender
+                newPeer("con1")
+
+            } else if (encryptedMessage.startsWith("con1")) {
+                Log.d("UDPClient", "New peer received ${packet.address.hostAddress}")
+                val peerAddress = packet.address.hostAddress
+                onPeerReceived(peerAddress)
+
+            } else if (!decryptedMessage.startsWith("con")) {
+                Log.d("UDPClient", "Received: $decryptedMessage")
+                onMessageReceived(decryptedMessage)
+            }
         }
     } catch (e: Exception) {
         Log.e("UDPClient", "Error receiving message: ${e.message}")
