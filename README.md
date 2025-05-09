@@ -4,3 +4,4 @@ Simple LAN peer-to-peer messaging app made in Kotlin with Jetpack Compose. This 
 ## Features
 - Auto detection system with broadcast messages
 - Relies on an UDP client
+- Simple cryptography implementation
